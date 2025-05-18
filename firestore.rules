@@ -1,0 +1,45 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Allow reading stylist data
+    match /stylists/{stylistId} {
+      allow read: true;  // Anyone can read stylist data
+      allow write: if false;  // Only admin can write (through Firebase Admin SDK)
+      
+      // Allow reading stylist's services
+      match /services/{serviceId} {
+        allow read: true;
+        allow write: if false;
+      }
+      
+      // Allow reading stylist's availability
+      match /availability/{availabilityId} {
+        allow read: true;
+        allow write: if false;
+      }
+    }
+
+    // Allow access to appointments collection
+    match /appointments/{appointmentId} {
+      allow read: true;
+      allow create: if request.resource.data.keys().hasAll(['clientId', 'clientName', 'dateTime', 'duration', 'serviceIds', 'serviceName', 'stylistId', 'status']);
+      allow update: if request.auth != null && 
+        (request.auth.uid == resource.data.clientId || 
+         request.auth.uid == resource.data.stylistId);
+      allow delete: if false;  // Only allow deletion through admin functions
+    }
+
+    // Allow clients to manage their own data
+    match /clients/{clientId} {
+      allow read: if true;  // Allow reading client data for consultation form checks
+      allow write: if true;  // Allow creating new clients during booking
+      
+      // Allow managing consultation forms
+      match /consultationForms/{stylistId} {
+        allow read: if true;
+        allow write: if true;  // Allow clients to submit their consultation forms
+      }
+    }
+  }
+} 
