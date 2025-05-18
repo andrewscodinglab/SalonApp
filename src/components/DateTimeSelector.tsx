@@ -40,6 +40,7 @@ export default function DateTimeSelector({ stylistId, selectedService, onChange,
   // Convert 12-hour time to minutes since midnight
   const timeToMinutes = (time: string, period: string): number => {
     console.log('Converting time:', { time, period });
+    
     const [hours, minutes] = time.split(':').map(Number);
     let hour24 = hours;
     
