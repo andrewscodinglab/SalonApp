@@ -3,11 +3,12 @@ import BookingForm from '@/components/BookingForm';
 import { notFound } from 'next/navigation';
 import { Stylist } from '@/types/stylist';
 
-interface PageProps {
+type PageProps = {
   params: {
     stylistId: string;
   };
-}
+  searchParams: { [key: string]: string | string[] | undefined };
+};
 
 // Helper function to ensure data is serializable
 function serializeData<T extends Record<string, any>>(data: T): T {
