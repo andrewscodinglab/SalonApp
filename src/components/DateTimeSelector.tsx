@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { format, addDays, isAfter } from 'date-fns';
+import { format, addDays, isAfter, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isSameDay, isToday } from 'date-fns';
 import { getStylistSchedule } from '@/lib/stylistService';
 import { collection, query, where, getDocs, Timestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import type { TimeSlot, WeeklySchedule } from '@/types/stylist';
+import { ChevronLeft, ChevronRight, Info } from 'lucide-react';
 
 interface DateTimeSelectorProps {
   stylistId: string;
@@ -28,6 +29,8 @@ const DAYS: Record<number, keyof WeeklySchedule> = {
   6: 'saturday'   // Saturday
 };
 
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
 export default function DateTimeSelector({ stylistId, selectedService, onChange, value }: DateTimeSelectorProps) {
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [availableTimeSlots, setAvailableTimeSlots] = useState<AvailableTimeSlot[]>([]);
@@ -36,6 +39,7 @@ export default function DateTimeSelector({ stylistId, selectedService, onChange,
   const [error, setError] = useState<string | null>(null);
   const [weeklySchedule, setWeeklySchedule] = useState<WeeklySchedule | null>(null);
   const [exceptions, setExceptions] = useState<Array<{ date: string }>>([]);
+  const [currentMonth, setCurrentMonth] = useState(new Date());
 
   // Convert 12-hour time to minutes since midnight
   const timeToMinutes = (time: string, period: string): number => {
@@ -55,34 +59,50 @@ export default function DateTimeSelector({ stylistId, selectedService, onChange,
     return totalMinutes;
   };
 
-  // Get available dates (next 14 days, only enabled days with slots)
-  const availableDates = React.useMemo(() => {
+  // Get calendar days for current month view
+  const calendarDays = React.useMemo(() => {
     if (!weeklySchedule) return [];
 
-    const dates: string[] = [];
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const start = startOfMonth(currentMonth);
+    const end = endOfMonth(currentMonth);
+    const days = eachDayOfInterval({ start, end });
 
-    for (let i = 0; i < 14; i++) {
-      const date = addDays(today, i);
-      const dayOfWeek = date.getDay();
-      const dateStr = format(date, 'yyyy-MM-dd');
-      
-      // Get the day name from our mapping
-      const dayName = DAYS[dayOfWeek];
-      const daySchedule = weeklySchedule[dayName];
-
-      // Skip if day is disabled, in exceptions, or has no slots
-      const isException = exceptions.some(ex => ex.date === dateStr);
-      if (!daySchedule?.enabled || isException || !daySchedule?.slots?.length) {
-        continue;
-      }
-
-      dates.push(dateStr);
+    // Add days from previous month to start on Sunday
+    const startDay = start.getDay();
+    if (startDay > 0) {
+      const previousDays = Array.from({ length: startDay }, (_, i) => {
+        return addDays(start, -(startDay - i));
+      });
+      days.unshift(...previousDays);
     }
 
-    return dates;
-  }, [weeklySchedule, exceptions]);
+    // Add days from next month to end on Saturday
+    const endDay = end.getDay();
+    if (endDay < 6) {
+      const nextDays = Array.from({ length: 6 - endDay }, (_, i) => {
+        return addDays(end, i + 1);
+      });
+      days.push(...nextDays);
+    }
+
+    return days;
+  }, [currentMonth, weeklySchedule]);
+
+  // Check if a date is available
+  const isDateAvailable = (date: Date): boolean => {
+    if (!weeklySchedule) return false;
+
+    const dayName = DAYS[date.getDay()];
+    const daySchedule = weeklySchedule[dayName];
+    const dateStr = format(date, 'yyyy-MM-dd');
+
+    // Check if date is in exceptions
+    const isException = exceptions.some(ex => ex.date === dateStr);
+    if (isException) return false;
+
+    // Check if day is enabled and has slots
+    return daySchedule?.enabled && daySchedule.slots.length > 0;
+  };
 
   // Load available time slots for selected date
   const loadTimeSlots = async (date: string) => {
@@ -184,13 +204,13 @@ export default function DateTimeSelector({ stylistId, selectedService, onChange,
           startMinutes: slotStartMinutes,
           endMinutes: slotEndMinutes,
           duration,
-          numberOfPossibleSlots: Math.floor((slotEndMinutes - slotStartMinutes) / 15),
+          numberOfPossibleSlots: Math.floor((slotEndMinutes - slotStartMinutes) / duration),
           startTime: `${Math.floor(slotStartMinutes / 60)}:${slotStartMinutes % 60}`,
           endTime: `${Math.floor(slotEndMinutes / 60)}:${slotEndMinutes % 60}`
         });
 
-        // Check every 15-minute interval
-        for (let minutes = slotStartMinutes; minutes <= slotEndMinutes - duration; minutes += 15) {
+        // Check intervals based on service duration
+        for (let minutes = slotStartMinutes; minutes <= slotEndMinutes - duration; minutes += duration) {
           const slotTime = new Date(year, month - 1, day);
           slotTime.setHours(Math.floor(minutes / 60), minutes % 60, 0, 0);
 
@@ -229,7 +249,7 @@ export default function DateTimeSelector({ stylistId, selectedService, onChange,
 
           availableSlots.push({
             startTime: format(slotTime, 'HH:mm'),
-            displayTime: `${format(slotTime, 'h:mm a')} (${duration} min)`
+            displayTime: format(slotTime, 'h:mm a')
           });
         }
       }
@@ -249,10 +269,11 @@ export default function DateTimeSelector({ stylistId, selectedService, onChange,
   };
 
   // Handle date selection
-  const handleDateChange = (date: string) => {
-    setSelectedDate(date);
+  const handleDateChange = (date: Date) => {
+    const dateStr = format(date, 'yyyy-MM-dd');
+    setSelectedDate(dateStr);
     setSelectedTime('');
-    loadTimeSlots(date);
+    loadTimeSlots(dateStr);
   };
 
   // Handle time selection
@@ -305,7 +326,7 @@ export default function DateTimeSelector({ stylistId, selectedService, onChange,
     return () => { mounted = false; };
   }, [stylistId]);
 
-  if (loading && !availableDates.length) {
+  if (loading && !calendarDays.length) {
     return (
       <div className="space-y-4">
         <div className="animate-pulse">
@@ -333,71 +354,116 @@ export default function DateTimeSelector({ stylistId, selectedService, onChange,
   }
 
   return (
-    <div className="space-y-4">
-      {/* Date Selection */}
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">
-          Select Date
-        </label>
-        {!selectedService ? (
-          <div className="text-sm text-amber-600 p-4 bg-amber-50 rounded-md">
-            Please select a service first to see available dates and times
-          </div>
-        ) : availableDates.length > 0 ? (
-          <select
-            value={selectedDate}
-            onChange={(e) => handleDateChange(e.target.value)}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-gold focus:border-gold bg-white"
-          >
-            <option value="">Select a date</option>
-            {availableDates.map((date) => {
-              // Parse the date and preserve the local date by setting hours to noon
-              const [year, month, day] = date.split('-').map(Number);
-              const displayDate = new Date(year, month - 1, day, 12, 0, 0);
-              return (
-                <option key={date} value={date}>
-                  {format(displayDate, 'EEEE, MMMM d, yyyy')}
-                </option>
-              );
-            })}
-          </select>
-        ) : (
-          <div className="text-sm text-red-600 p-4 bg-red-50 rounded-md">
-            No available dates in the next 14 days
-          </div>
-        )}
-      </div>
+    <div className="space-y-6">
+      {!selectedService && (
+        <div className="flex items-center gap-3 p-4 bg-[#FFF9E5] rounded-lg border border-[#D4AF37]/20">
+          <Info className="w-5 h-5 text-[#D4AF37]" />
+          <p className="text-[#946C00] font-medium">
+            Please select a service to view available dates and times
+          </p>
+        </div>
+      )}
+      {selectedService && (
+        <>
+          {/* Calendar View */}
+          <div className="rounded-lg border border-gray-200">
+            {/* Calendar Header */}
+            <div className="flex items-center justify-between p-4 border-b border-gray-200">
+              <button
+                onClick={() => setCurrentMonth(prev => addDays(prev, -30))}
+                className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+              >
+                <ChevronLeft className="w-5 h-5" />
+              </button>
+              <h3 className="font-medium">
+                {format(currentMonth, 'MMMM yyyy')}
+              </h3>
+              <button
+                onClick={() => setCurrentMonth(prev => addDays(prev, 30))}
+                className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+              >
+                <ChevronRight className="w-5 h-5" />
+              </button>
+            </div>
 
-      {/* Time Selection */}
-      {selectedDate && (
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Select Time
-          </label>
-          {loading ? (
-            <div className="text-sm text-gray-500">Loading available times...</div>
-          ) : availableTimeSlots.length > 0 ? (
-            <select
-              value={selectedTime}
-              onChange={(e) => handleTimeChange(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-gold focus:border-gold bg-white"
-            >
-              <option value="">Select a time</option>
-              {availableTimeSlots.map((slot, index) => (
-                <option
-                  key={`${slot.startTime}-${index}`}
-                  value={slot.startTime}
-                >
-                  {slot.displayTime}
-                </option>
+            {/* Weekday Headers */}
+            <div className="grid grid-cols-7 gap-px bg-gray-200">
+              {WEEKDAYS.map(day => (
+                <div key={day} className="bg-gray-50 p-2 text-center text-sm font-medium">
+                  {day}
+                </div>
               ))}
-            </select>
-          ) : (
-            <div className="text-sm text-red-600">
-              No available time slots for this date
+            </div>
+
+            {/* Calendar Grid */}
+            <div className="grid grid-cols-7 gap-px bg-gray-200">
+              {calendarDays.map((day, index) => {
+                const isAvailable = isDateAvailable(day);
+                const isSelected = selectedDate === format(day, 'yyyy-MM-dd');
+                const isCurrentMonth = isSameMonth(day, currentMonth);
+                
+                return (
+                  <button
+                    key={day.toISOString()}
+                    onClick={() => isAvailable && handleDateChange(day)}
+                    disabled={!isAvailable}
+                    className={`
+                      p-4 text-center bg-white hover:bg-gray-50 transition-colors relative
+                      ${!isCurrentMonth ? 'text-gray-400' : ''}
+                      ${isSelected ? 'bg-[#D4AF37]/10 font-medium' : ''}
+                      ${isToday(day) ? 'font-bold' : ''}
+                      ${!isAvailable ? 'cursor-not-allowed bg-gray-50 text-gray-400' : ''}
+                    `}
+                  >
+                    <span className="relative z-10">
+                      {format(day, 'd')}
+                    </span>
+                    {isAvailable && (
+                      <div className="absolute bottom-1 left-1/2 transform -translate-x-1/2">
+                        <div className="w-1 h-1 bg-[#D4AF37] rounded-full"></div>
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Time Slots */}
+          {selectedDate && (
+            <div>
+              <h4 className="font-medium mb-3">Available Times</h4>
+              {loading ? (
+                <div className="text-sm text-gray-500">Loading available times...</div>
+              ) : availableTimeSlots.length > 0 ? (
+                <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                  {availableTimeSlots.map((slot, index) => (
+                    <button
+                      key={`${slot.startTime}-${index}`}
+                      onClick={() => handleTimeChange(slot.startTime)}
+                      className={`
+                        p-3 text-center border rounded-md transition-colors
+                        ${selectedTime === slot.startTime
+                          ? 'border-[#D4AF37] bg-[#D4AF37]/5 text-[#D4AF37]'
+                          : 'border-gray-200 hover:border-[#D4AF37]/50'
+                        }
+                      `}
+                    >
+                      <div>{slot.displayTime}</div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {selectedService.duration} min
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-sm text-gray-600 p-4 bg-gray-50 rounded-md">
+                  No available time slots for this date
+                </div>
+              )}
             </div>
           )}
-        </div>
+        </>
       )}
     </div>
   );

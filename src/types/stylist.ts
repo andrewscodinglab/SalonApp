@@ -61,15 +61,13 @@ export interface StylistAvailability {
 
 export interface Stylist {
   id: string;
-  uid: string;
-  handle: string;
   name: string;
-  email: string;
-  phone: string;
-  bio?: string;
-  profileImageUrl?: string;
   salonName?: string;
-  services: Service[];
-  stripeAccountId?: string;
-  consultationForm?: ConsultationForm;  // Added consultation form
+  profileImageUrl?: string;
+  services?: Service[];
+  consultationForm?: ConsultationForm;
+  weeklySchedule?: WeeklySchedule;
+  address?: string;
+  phone?: string;
+  email?: string;
 } 
