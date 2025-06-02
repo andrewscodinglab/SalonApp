@@ -7,7 +7,7 @@
  * See a full list of supported triggers at https://firebase.google.com/docs/functions
  */
 
-import {HttpsError, onCall} from "firebase-functions/v2/https";
+import {HttpsError, onCall, onRequest} from "firebase-functions/v2/https";
 import {defineSecret} from "firebase-functions/params";
 import * as logger from "firebase-functions/logger";
 import Stripe from "stripe";
@@ -285,6 +285,75 @@ export const fetchStripeTerminalConnectionToken = onCall({
       'Unable to create connection token. Please try again later.'
           );
         }
+});
+
+// --- Stripe Webhook Handler ---
+export const handleStripeWebhook = onRequest({
+  secrets: [stripeSecretKey]
+}, async (request, response) => {
+  const stripeInstance = getStripe();
+  if (!stripeInstance) {
+    response.status(500).send('Stripe is not properly configured.');
+    return;
+  }
+
+  const sig = request.headers['stripe-signature'];
+  if (!sig) {
+    response.status(400).send('Missing Stripe signature');
+    return;
+  }
+
+  try {
+    const event = stripeInstance.webhooks.constructEvent(
+      request.rawBody || '',
+      sig,
+      process.env.STRIPE_WEBHOOK_SECRET || ''
+    );
+
+    if (event.type === 'payment_intent.succeeded') {
+      const paymentIntent = event.data.object as Stripe.PaymentIntent;
+      const { firestoreClientId, serviceIds } = paymentIntent.metadata;
+
+      if (!firestoreClientId) {
+        logger.error('Missing clientId in payment intent metadata');
+        response.status(400).send('Missing clientId in payment intent metadata');
+        return;
+      }
+
+      // Find the appointment with pending payment status
+      const appointmentsRef = db.collection('appointments');
+      const q = appointmentsRef
+        .where('clientId', '==', firestoreClientId)
+        .where('status', '==', 'Pending Payment');
+      const snapshot = await q.get();
+
+      if (snapshot.empty) {
+        logger.error('No pending appointment found for client:', firestoreClientId);
+        response.status(404).send('No pending appointment found');
+        return;
+      }
+
+      // Update the appointment status
+      const appointmentDoc = snapshot.docs[0];
+      await appointmentDoc.ref.update({
+        status: 'Scheduled',
+        paymentStatus: 'Paid',
+        lastUpdated: admin.firestore.Timestamp.now()
+      });
+
+      logger.info('Updated appointment status after successful payment:', {
+        appointmentId: appointmentDoc.id,
+        clientId: firestoreClientId
+      });
+
+      response.status(200).send('Webhook processed successfully');
+    } else {
+      response.status(200).send('Event type not handled');
+    }
+  } catch (err) {
+    logger.error('Error processing webhook:', err);
+    response.status(400).send('Webhook Error');
+  }
 });
 
 // TODO:
