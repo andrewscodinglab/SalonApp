@@ -65,7 +65,7 @@ export async function POST(request: Request) {
         const bookingId = session.metadata?.bookingId;
 
         if (bookingId) {
-          await updateBookingStatus(bookingId, 'Confirmed', 'Paid', session.id);
+          await updateBookingStatus(bookingId, 'Confirmed', 'Authorized', session.id);
         }
         break;
       }

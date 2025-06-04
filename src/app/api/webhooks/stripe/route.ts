@@ -60,7 +60,7 @@ export async function POST(request: Request) {
       await updateBookingStatus(
         bookingId,
         'Scheduled',
-        'Paid',
+        'Authorized',
         session.id,
         session.payment_intent as string
       );
