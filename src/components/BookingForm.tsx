@@ -7,9 +7,7 @@ import * as z from 'zod';
 import { format } from 'date-fns';
 import { trackEvent, AnalyticsEvents } from '@/lib/analytics';
 import { Stylist, Service } from '@/types/stylist';
-import { createAppointment } from '@/lib/stylistService';
-import type { Appointment } from '@/types/appointment';
-import { findClientByEmailAndPhone, createClient, addClientNote } from '@/lib/clientService';
+import { findClientByEmailAndPhone, createClient } from '@/lib/clientService';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Timestamp, serverTimestamp } from 'firebase/firestore';
@@ -196,23 +194,22 @@ export default function BookingForm({ stylist }: BookingFormProps) {
         }
       }
 
-      // Create payment intent and appointment
-      const response = await fetch('/api/create-payment-intent', {
+      // Create booking record
+      const response = await fetch('/api/bookings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           serviceIds: [selectedService.id],
           clientId,
           stylistId: stylist.id,
-          amount: selectedService.price,
           date: new Date(data.dateTime).toISOString(),
           time: format(new Date(data.dateTime), 'HH:mm'),
           duration: selectedService.duration
         })
       });
-      const { clientSecret, appointmentId, error } = await response.json();
+      const { bookingId, error } = await response.json();
       if (error) throw new Error(error);
-      if (!clientSecret || !appointmentId) throw new Error('Failed to create payment intent.');
+      if (!bookingId) throw new Error('Failed to create booking.');
 
       // Add client to stylist's notes
       await setDoc(
@@ -223,13 +220,13 @@ export default function BookingForm({ stylist }: BookingFormProps) {
         }
       );
 
-      // Redirect to /pay page with appointmentId and clientSecret
-      router.push(`/pay?serviceIds=${selectedService.id}&clientId=${clientId}&stylistId=${stylist.id}&amount=${selectedService.price}`);
+      // Redirect to /pay page to complete payment
+      router.push(`/pay?serviceIds=${selectedService.id}&clientId=${clientId}&stylistId=${stylist.id}&amount=${selectedService.price}&bookingId=${bookingId}`);
 
       trackEvent(AnalyticsEvents.BOOKING_COMPLETED, {
         stylistId: stylist.id,
         serviceId: selectedService.id,
-        appointmentId
+        bookingId
       });
     } catch (error) {
       console.error('Booking failed:', error);
