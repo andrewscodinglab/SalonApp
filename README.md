@@ -62,7 +62,7 @@ NEXT_PUBLIC_FIREBASE_APP_ID=your_firebase_app_id
 
 1. Visit `http://localhost:3001/book/test-stylist-1`
 2. Select a service and time
-3. Complete the booking form
+3. Complete the booking form. A booking record will be created and you will be redirected to the payment page.
 4. For test payments, use:
    - Card number: 4242 4242 4242 4242
    - Any future expiration date
