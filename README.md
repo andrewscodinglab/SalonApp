@@ -93,6 +93,21 @@ NEXT_PUBLIC_FIREBASE_APP_ID=your_firebase_app_id
 4. Check the webhook logs in the Stripe CLI terminal
 5. Verify the booking status updates in the confirmation page
 
+## Handling No-Show Appointments
+
+To charge a no-show fee, send a `POST` request to `/api/handle-no-show`.
+
+* **Required**: Include either `appointmentId` or `paymentIntentId` in the JSON body.
+* **Optional**: Provide `noShowFeePercentage` to override the default of 50%.
+
+This endpoint captures a partial amount from the authorized payment intent. Example:
+
+```bash
+curl -X POST http://localhost:3001/api/handle-no-show \
+  -H "Content-Type: application/json" \
+  -d '{"appointmentId": "YOUR_APPOINTMENT_ID", "noShowFeePercentage": 50}'
+```
+
 ## Troubleshooting
 
 ### Common Issues
