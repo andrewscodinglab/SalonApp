@@ -19,6 +19,7 @@ import DateTimeSelector from '@/components/DateTimeSelector';
 import { Clock, DollarSign, Calendar } from 'lucide-react';
 import { Spinner } from '@/components/ui/Spinner';
 import { useRouter } from 'next/navigation';
+import { loadStripe } from '@stripe/stripe-js';
 
 interface BookingFormProps {
   stylist: Stylist;
@@ -195,68 +196,44 @@ export default function BookingForm({ stylist }: BookingFormProps) {
         }
       }
 
-      const appointmentData: Omit<Appointment, 'id' | 'createdAt'> = {
-        clientId,
-        clientName: data.clientName,
-        dateTime: new Date(data.dateTime),
-        duration: selectedService.duration,
-        notes: data.notes || '',
-        price: `$${selectedService.price.toFixed(2)}`,
-        serviceIds: [selectedService.id],
-        serviceName: selectedService.name,
-        stylistId: stylist.id,
-        status: 'Pending Payment'
-      };
-
-      const appointmentId = await createAppointment(appointmentData);
-
-      if (appointmentId) {
-        // Add client to stylist's notes
-        await setDoc(
-          doc(db, `stylists/${stylist.id}/clientNotes/${clientId}`),
-          {
-            createdAt: Timestamp.now(),
-            notes: data.notes || `New booking for ${selectedService.name}`,
-          }
-        );
-
-        // Create a payment link
-        const response = await fetch('/api/create-payment-link', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            amount: selectedService.price,
-            serviceName: selectedService.name,
-            bookingId: appointmentId,
-            stylistId: stylist.id,
-            clientId,
-          }),
-        });
-
-        const { url, error } = await response.json();
-
-        if (error) {
-          throw new Error(error);
-        }
-
-        // Redirect to the payment link
-        window.location.href = url;
-
-        trackEvent(AnalyticsEvents.BOOKING_COMPLETED, {
+      // Create payment intent and appointment
+      const response = await fetch('/api/create-payment-intent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          serviceIds: [selectedService.id],
+          clientId,
           stylistId: stylist.id,
-          serviceId: selectedService.id,
-          appointmentId
-        });
-      } else {
-        throw new Error('Failed to create appointment. Please try again.');
-      }
+          amount: selectedService.price,
+          date: new Date(data.dateTime).toISOString(),
+          time: format(new Date(data.dateTime), 'HH:mm'),
+          duration: selectedService.duration
+        })
+      });
+      const { clientSecret, appointmentId, error } = await response.json();
+      if (error) throw new Error(error);
+      if (!clientSecret || !appointmentId) throw new Error('Failed to create payment intent.');
+
+      // Add client to stylist's notes
+      await setDoc(
+        doc(db, `stylists/${stylist.id}/clientNotes/${clientId}`),
+        {
+          createdAt: Timestamp.now(),
+          notes: data.notes || `New booking for ${selectedService.name}`,
+        }
+      );
+
+      // Redirect to /pay page with appointmentId and clientSecret
+      router.push(`/pay?serviceIds=${selectedService.id}&clientId=${clientId}&stylistId=${stylist.id}&amount=${selectedService.price}`);
+
+      trackEvent(AnalyticsEvents.BOOKING_COMPLETED, {
+        stylistId: stylist.id,
+        serviceId: selectedService.id,
+        appointmentId
+      });
     } catch (error) {
       console.error('Booking failed:', error);
       const errorMessage = error instanceof Error ? error.message : 'An error occurred while booking. Please try again.';
-      
-      // Check if it's an availability error
       if (errorMessage.includes('Time slot') || errorMessage.includes('available')) {
         setAvailabilityError(errorMessage);
       } else {

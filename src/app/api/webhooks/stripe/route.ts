@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { db } from '@/lib/firebase';
-import { doc, updateDoc, getDoc } from 'firebase/firestore';
+import { doc, updateDoc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
 
 if (!process.env.STRIPE_SECRET_KEY) {
   throw new Error('STRIPE_SECRET_KEY is not set');
@@ -13,7 +13,7 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
 
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
-async function updateBookingStatus(bookingId: string, status: string, paymentStatus: string, stripeSessionId?: string) {
+async function updateBookingStatus(bookingId: string, status: string, paymentStatus: string, stripeSessionId?: string, paymentIntentId?: string) {
   const bookingRef = doc(db, 'appointments', bookingId);
   const bookingSnap = await getDoc(bookingRef);
 
@@ -31,82 +31,93 @@ async function updateBookingStatus(bookingId: string, status: string, paymentSta
     updateData.stripeSessionId = stripeSessionId;
   }
 
+  if (paymentIntentId) {
+    updateData.paymentIntentId = paymentIntentId;
+  }
+
   await updateDoc(bookingRef, updateData);
 }
 
 export async function POST(request: Request) {
+  const body = await request.text();
+  const signature = request.headers.get('stripe-signature');
+
+  if (!signature || !webhookSecret) {
+    return NextResponse.json({ error: 'Missing stripe signature or webhook secret' }, { status: 400 });
+  }
+
   try {
-    const body = await request.text();
-    const signature = request.headers.get('stripe-signature');
+    const event = stripe.webhooks.constructEvent(body, signature, webhookSecret);
 
-    if (!signature || !webhookSecret) {
-      return NextResponse.json(
-        { error: 'Missing stripe signature or webhook secret' },
-        { status: 400 }
+    if (event.type === 'checkout.session.completed') {
+      const session = event.data.object as Stripe.Checkout.Session;
+      const bookingId = session.metadata?.bookingId;
+
+      if (!bookingId) {
+        throw new Error('No booking ID found in session metadata');
+      }
+
+      await updateBookingStatus(
+        bookingId,
+        'Scheduled',
+        'Paid',
+        session.id,
+        session.payment_intent as string
       );
+
+      return NextResponse.json({ received: true });
     }
 
-    let event: Stripe.Event;
+    if (event.type === 'payment_intent.succeeded') {
+      const paymentIntent = event.data.object as Stripe.PaymentIntent;
+      const bookingId = paymentIntent.metadata?.bookingId;
 
-    try {
-      event = stripe.webhooks.constructEvent(body, signature, webhookSecret);
-    } catch (err) {
-      console.error('Webhook signature verification failed:', err);
-      return NextResponse.json(
-        { error: 'Webhook signature verification failed' },
-        { status: 400 }
-      );
-    }
-
-    // Handle the event
-    switch (event.type) {
-      case 'checkout.session.completed': {
-        const session = event.data.object as Stripe.Checkout.Session;
-        const bookingId = session.metadata?.bookingId;
-
-        if (bookingId) {
-          await updateBookingStatus(bookingId, 'Confirmed', 'Paid', session.id);
+      if (!bookingId) {
+        // If no bookingId in metadata, try to find the appointment by clientId
+        const clientId = paymentIntent.metadata?.firestoreClientId;
+        if (!clientId) {
+          throw new Error('No client ID found in payment intent metadata');
         }
-        break;
+
+        // Find the appointment with pending payment status for this client
+        const appointmentsRef = collection(db, 'appointments');
+        const q = query(
+          appointmentsRef,
+          where('clientId', '==', clientId),
+          where('status', '==', 'Pending Payment')
+        );
+        const snapshot = await getDocs(q);
+
+        if (snapshot.empty) {
+          throw new Error('No pending appointment found for client');
+        }
+
+        const appointmentDoc = snapshot.docs[0];
+        await updateDoc(appointmentDoc.ref, {
+          status: 'Scheduled',
+          paymentStatus: 'Paid',
+          paymentIntentId: paymentIntent.id,
+          updatedAt: new Date()
+        });
+      } else {
+        await updateBookingStatus(
+          bookingId,
+          'Scheduled',
+          'Paid',
+          undefined,
+          paymentIntent.id
+        );
       }
 
-      case 'checkout.session.expired': {
-        const session = event.data.object as Stripe.Checkout.Session;
-        const bookingId = session.metadata?.bookingId;
-
-        if (bookingId) {
-          await updateBookingStatus(bookingId, 'Cancelled', 'Failed', session.id);
-        }
-        break;
-      }
-
-      case 'payment_intent.succeeded': {
-        const paymentIntent = event.data.object as Stripe.PaymentIntent;
-        const bookingId = paymentIntent.metadata?.bookingId;
-
-        if (bookingId) {
-          await updateBookingStatus(bookingId, 'Confirmed', 'Paid');
-        }
-        break;
-      }
-
-      case 'payment_intent.payment_failed': {
-        const paymentIntent = event.data.object as Stripe.PaymentIntent;
-        const bookingId = paymentIntent.metadata?.bookingId;
-
-        if (bookingId) {
-          await updateBookingStatus(bookingId, 'Cancelled', 'Failed');
-        }
-        break;
-      }
+      return NextResponse.json({ received: true });
     }
 
     return NextResponse.json({ received: true });
-  } catch (error) {
-    console.error('Error processing webhook:', error);
+  } catch (err) {
+    console.error('Error processing webhook:', err);
     return NextResponse.json(
-      { error: 'Webhook handler failed' },
-      { status: 500 }
+      { error: err instanceof Error ? err.message : 'Webhook error' },
+      { status: 400 }
     );
   }
 } 

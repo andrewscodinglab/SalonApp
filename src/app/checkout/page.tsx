@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { loadStripe } from '@stripe/stripe-js';
 
 // Initialize Stripe outside of component to avoid recreating on each render
-const stripePromise = loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY!);
+const stripePromise = loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || '');
 
 export default function CheckoutPage() {
   const searchParams = useSearchParams();
@@ -15,6 +15,8 @@ export default function CheckoutPage() {
   useEffect(() => {
     const initializeCheckout = async () => {
       try {
+        console.log('Starting checkout initialization...');
+        
         // Log parameters for debugging
         const services = searchParams.get('services');
         const clientId = searchParams.get('clientId');
@@ -29,9 +31,11 @@ export default function CheckoutPage() {
         });
 
         if (!services || !clientId || !stylistId || !amount) {
+          console.error('Missing parameters:', { services, clientId, stylistId, amount });
           throw new Error('Missing required parameters');
         }
 
+        console.log('Creating checkout session...');
         // Create checkout session
         const response = await fetch('/api/create-checkout-session', {
           method: 'POST',
@@ -46,20 +50,24 @@ export default function CheckoutPage() {
           }),
         });
 
-        const data = await response.json();
-
         if (!response.ok) {
-          throw new Error(data.error || 'Failed to create checkout session');
+          const errorData = await response.json();
+          console.error('Failed to create checkout session:', errorData);
+          throw new Error(errorData.error || 'Failed to create checkout session');
         }
 
+        const data = await response.json();
         console.log('Checkout session created:', data.sessionId);
 
         // Redirect to Stripe Checkout
+        console.log('Initializing Stripe...');
         const stripe = await stripePromise;
         if (!stripe) {
+          console.error('Stripe failed to initialize');
           throw new Error('Stripe failed to initialize');
         }
 
+        console.log('Redirecting to Stripe Checkout...');
         const { error: redirectError } = await stripe.redirectToCheckout({
           sessionId: data.sessionId,
         });

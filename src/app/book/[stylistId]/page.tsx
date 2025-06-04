@@ -17,7 +17,7 @@ function serializeData<T extends Record<string, any>>(data: T): T {
 }
 
 export default async function StylistBookingPage({ params }: PageProps) {
-  const stylistId = params?.stylistId;
+  const stylistId = await params?.stylistId;
   
   if (!stylistId) {
     throw new Error('Stylist ID is required');

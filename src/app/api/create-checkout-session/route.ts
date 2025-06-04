@@ -14,7 +14,7 @@ export async function POST(request: Request) {
     const body = await request.json();
     console.log('Received request body:', body);
 
-    const { serviceIds, clientId, stylistId, amount } = body;
+    const { serviceIds, clientId, stylistId, amount, bookingId } = body;
 
     // Validate required fields
     if (!amount || amount <= 0) {
@@ -27,6 +27,10 @@ export async function POST(request: Request) {
 
     if (!clientId) {
       return NextResponse.json({ error: 'Missing clientId' }, { status: 400 });
+    }
+
+    if (!bookingId) {
+      return NextResponse.json({ error: 'Missing bookingId' }, { status: 400 });
     }
 
     // Create a checkout session
@@ -45,12 +49,16 @@ export async function POST(request: Request) {
         },
       ],
       mode: 'payment',
-      success_url: `${process.env.NEXT_PUBLIC_BASE_URL}/confirmation?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.NEXT_PUBLIC_BASE_URL}/book/${stylistId}`,
+      payment_intent_data: {
+        capture_method: 'manual',
+      },
+      success_url: `${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3001'}/confirmation?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3001'}/book/${stylistId}`,
       metadata: {
         serviceIds: JSON.stringify(serviceIds),
         clientId,
         stylistId,
+        bookingId,
       },
     });
 
