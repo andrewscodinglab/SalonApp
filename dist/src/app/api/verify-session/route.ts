@@ -6,7 +6,7 @@ if (!process.env.STRIPE_SECRET_KEY) {
 }
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
-  apiVersion: '2025-05-28.basil',
+  apiVersion: '2024-03-14',
 });
 
 export async function GET(request: Request) {
